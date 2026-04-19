@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestor de Torneos</title>
+    
+    <!-- Carga de Tailwind CSS para los estilos -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Carga de React -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Carga de Babel para leer el código JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #475569; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30 overflow-x-hidden">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        function App() {
+          const [view, setView] = useState('settings'); 
+          
+          const [zoom, setZoom] = useState(1);
+          const [searchQuery, setSearchQuery] = useState('');
+          const [toast, setToast] = useState({ show: false, msg: '', type: 'info' });
+
+          const [savedTournaments, setSavedTournaments] = useState([]);
+          const [currentTournamentId, setCurrentTournamentId] = useState(null);
+          const [tournamentName, setTournamentName] = useState('Mi Gran Torneo');
+
+          const [appConfig, setAppConfig] = useState({ doubleElimination: true, bestOfRegular: 3, bestOfFinal: 5 });
+          const [roster, setRoster] = useState(['Jugador 1', 'Jugador 2', 'Jugador 3', 'Jugador 4', 'Jugador 5']);
+          const [bracketSlots, setBracketSlots] = useState(['Jugador 1', '', 'Jugador 4', 'Jugador 5', 'Jugador 2', '', 'Jugador 3', '']);
+          const [scores, setScores] = useState({});
+
+          const [confirmClear, setConfirmClear] = useState(false);
+          const [confirmReset, setConfirmReset] = useState(false);
+
+          const [editingId, setEditingId] = useState(null);
+          const [editTempName, setEditTempName] = useState('');
+
+          // --- GESTOR DE GUARDADO LOCAL (LOCALSTORAGE) ---
+          useEffect(() => {
+            const loaded = localStorage.getItem('mis_torneos_app');
+            if (loaded) {
+              try {
+                const parsed = JSON.parse(loaded);
+                parsed.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+                setSavedTournaments(parsed);
+              } catch (e) {
+                console.error("Error leyendo localStorage", e);
+              }
+            }
+          }, []);
+
+          const showToastMsg = (msg, type = 'info') => {
+            setToast({ show: true, msg, type });
+            setTimeout(() => setToast({ show: false, msg: '', type: 'info' }), 3000);
+          };
+
+          const handleSaveTournament = () => {
+            try {
+              const docId = currentTournamentId || crypto.randomUUID();
+              const newTournament = {
+                id: docId,
+                name: tournamentName || "Torneo sin título",
+                config: appConfig,
+                roster,
+                slots: bracketSlots,
+                scores,
+                updatedAt: new Date().toISOString()
+              };
+
+              const currentSaved = JSON.parse(localStorage.getItem('mis_torneos_app') || '[]');
+              let updatedSaved;
+              
+              if (currentTournamentId) {
+                updatedSaved = currentSaved.map(t => t.id === currentTournamentId ? newTournament : t);
+              } else {
+                updatedSaved = [newTournament, ...currentSaved];
+              }
+
+              localStorage.setItem('mis_torneos_app', JSON.stringify(updatedSaved));
+              updatedSaved.sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt));
+              setSavedTournaments(updatedSaved);
+              setCurrentTournamentId(docId);
+              
+              showToastMsg("¡Progreso guardado localmente!", "success");
+            } catch (e) {
+              console.error(e);
+              showToastMsg("Error al guardar", "error");
+            }
+          };
+
+          const handleLoadTournament = (t) => {
+            setTournamentName(t.name);
+            setAppConfig(t.config);
+            setRoster(t.roster || []);
+            setBracketSlots(t.slots || []);
+            setScores(t.scores || {});
+            setCurrentTournamentId(t.id);
+            showToastMsg(`Torneo "${t.name}" cargado`, "success");
+            setView('bracket');
+          };
+
+          const handleNewTournament = () => {
+            setTournamentName(`Torneo ${new Date().toLocaleDateString()}`);
+            setCurrentTournamentId(null);
+            setRoster(['Jugador 1', 'Jugador 2', 'Jugador 3', 'Jugador 4']);
+            setBracketSlots(['Jugador 1', '', 'Jugador 2', '', 'Jugador 3', '', 'Jugador 4', '']);
+            setScores({});
+            showToastMsg("Nuevo torneo creado. ¡Configúralo!", "info");
+            setView('settings');
+          };
+
+          const handleDeleteTournament = (id) => {
+            try {
+              const currentSaved = JSON.parse(localStorage.getItem('mis_torneos_app') || '[]');
+              const updatedSaved = currentSaved.filter(t => t.id !== id);
+              
+              localStorage.setItem('mis_torneos_app', JSON.stringify(updatedSaved));
+              setSavedTournaments(updatedSaved);
+              
+              if (currentTournamentId === id) setCurrentTournamentId(null);
+              showToastMsg("Torneo eliminado", "info");
+            } catch (e) {
+              console.error(e);
+              showToastMsg("Error al eliminar", "error");
+            }
+          };
+
+          const handleRenameStart = (t) => {
+            setEditingId(t.id);
+            setEditTempName(t.name);
+          };
+
+          const handleRenameSave = (id) => {
+            if (!editTempName.trim()) {
+               setEditingId(null);
+               return;
+            }
+            try {
+               const currentSaved = JSON.parse(localStorage.getItem('mis_torneos_app') || '[]');
+               const updatedSaved = currentSaved.map(t => t.id === id ? { ...t, name: editTempName.trim() } : t);
+               
+               localStorage.setItem('mis_torneos_app', JSON.stringify(updatedSaved));
+               setSavedTournaments(updatedSaved);
+
+               if (currentTournamentId === id) {
+                  setTournamentName(editTempName.trim());
+               }
+               setEditingId(null);
+               showToastMsg("Nombre actualizado", "success");
+            } catch (e) {
+               console.error(e);
+               showToastMsg("Error al renombrar", "error");
+            }
+          };
+
+          const highestSlotUsed = bracketSlots.reduce((max, slot, idx) => (slot && slot.trim() !== '') ? Math.max(max, idx) : max, -1);
+          const elementsNeeded = Math.max(roster.length, highestSlotUsed + 1);
+          const currentN = Math.max(2, Math.pow(2, Math.ceil(Math.log2(elementsNeeded || 1))));
+          
+          const activeSlots = [...bracketSlots];
+          while(activeSlots.length < currentN) activeSlots.push('');
+
+          const checkAndSetBracketView = () => {
+            const activePlayers = bracketSlots.filter(p => p && p.trim() !== '').length;
+            if (activePlayers < 2) {
+              showToastMsg("¡Asigna al menos 2 jugadores o usa RANDOMIZAR!", "error");
+              return;
+            }
+            setView('bracket');
+          };
+
+          const handleRosterChange = (index, newName) => {
+            const oldName = roster[index];
+            const newRoster = [...roster];
+            newRoster[index] = newName;
+            setRoster(newRoster);
+            setBracketSlots(prev => prev.map(slot => slot === oldName ? newName : slot));
+          };
+
+          const addPlayer = () => {
+            const newName = `Jugador ${roster.length + 1}`;
+            setRoster([...roster, newName]);
+            setBracketSlots(prev => {
+               const next = [...prev];
+               const emptyIdx = next.findIndex(s => !s || s.trim() === '');
+               if (emptyIdx !== -1) next[emptyIdx] = newName;
+               else next.push(newName);
+               return next;
+            });
+          };
+          
+          const removePlayer = (index) => {
+            const nameToRemove = roster[index];
+            setRoster(roster.filter((_, i) => i !== index));
+            setBracketSlots(prev => prev.map(slot => slot === nameToRemove ? '' : slot));
+          };
+
+          const clearRoster = () => {
+            if (confirmClear) {
+              setRoster([]); setBracketSlots([]); setScores({}); setConfirmClear(false);
+            } else {
+              setConfirmClear(true); setTimeout(() => setConfirmClear(false), 3000);
+            }
+          };
+
+          const updateSlot = (slotIndex, playerName) => {
+            setBracketSlots(prev => {
+              const next = [...prev];
+              while(next.length <= slotIndex) next.push('');
+              next[slotIndex] = playerName;
+              return next;
+            });
+          };
+
+          const randomizeBracket = () => {
+            const validPlayers = roster.filter(p => p.trim() !== '');
+            if (validPlayers.length < 2) return showToastMsg("¡Añade al menos 2 jugadores primero!", "error");
+            
+            const N = Math.max(2, Math.pow(2, Math.ceil(Math.log2(validPlayers.length))));
+            const shuffled = [...validPlayers].sort(() => Math.random() - 0.5);
+            const newSlots = Array(N).fill('');
+            
+            let slotIndex = 0;
+            shuffled.forEach((p) => {
+              newSlots[slotIndex] = p;
+              slotIndex += 2;
+              if (slotIndex >= N) slotIndex = 1;
+            });
+
+            setBracketSlots(newSlots);
+            setScores({});
+          };
+
+          const updateScore = (matchKey, playerIndex, delta, winsNeeded) => {
+            setScores(prev => {
+              const current = prev[matchKey] || [0, 0];
+              const newScore = Math.max(0, current[playerIndex] + delta);
+              const updated = [...current];
+              updated[playerIndex] = Math.min(newScore, winsNeeded);
+              return { ...prev, [matchKey]: updated };
+            });
+          };
+
+          const resetMatch = (matchKey) => setScores(prev => ({ ...prev, [matchKey]: [0, 0] }));
+
+          const resetTournament = () => {
+            if (confirmReset) {
+              setScores({}); setConfirmReset(false);
+            } else {
+              setConfirmReset(true); setTimeout(() => setConfirmReset(false), 3000);
+            }
+          };
+
+          const isBye = (p) => p !== null && p !== undefined && (typeof p === 'string' && p.trim() === '');
+          const isWaiting = (p) => p === null;
+
+          const evaluateMatch = (key, p1, p2, bestOf) => {
+            const s = scores[key] || [0, 0];
+            const winsNeeded = Math.ceil(bestOf / 2);
+            let winner = null, loser = null;
+
+            const p1Bye = isBye(p1), p2Bye = isBye(p2);
+            const p1Wait = isWaiting(p1), p2Wait = isWaiting(p2);
+
+            if (p1Wait || p2Wait) { winner = null; loser = null; }
+            else if (p1Bye && p2Bye) { winner = ''; loser = ''; }
+            else if (p1Bye) { winner = p2; loser = ''; }
+            else if (p2Bye) { winner = p1; loser = ''; }
+            else {
+              if (s[0] >= winsNeeded) { winner = p1; loser = p2; }
+              else if (s[1] >= winsNeeded) { winner = p2; loser = p1; }
+            }
+            return { key, p1, p2, s1: s[0], s2: s[1], winner, loser, bestOf, winsNeeded, isAutoWin: p1Bye || p2Bye };
+          };
+
+          const boReg = appConfig.bestOfRegular;
+          const boFin = appConfig.bestOfFinal;
+
+          const ubRounds = [];
+          let currentRoundMatches = [];
+          let matchCounter = 1;
+
+          for (let i = 0; i < currentN; i += 2) {
+            currentRoundMatches.push(evaluateMatch(`U${matchCounter++}`, activeSlots[i], activeSlots[i+1], boReg));
+          }
+          ubRounds.push(currentRoundMatches);
+
+          while (currentRoundMatches.length > 1) {
+            const nextRound = [];
+            for (let i = 0; i < currentRoundMatches.length; i += 2) {
+              nextRound.push(evaluateMatch(`U${matchCounter++}`, currentRoundMatches[i].winner, currentRoundMatches[i+1].winner, boReg));
+            }
+            ubRounds.push(nextRound);
+            currentRoundMatches = nextRound;
+          }
+
+          const lbRounds = [];
+          let lbMatchCounter = 1;
+          if (appConfig.doubleElimination && currentN > 2) {
+            let prevLb = [];
+            for (let ubR = 0; ubR < ubRounds.length; ubR++) {
+              if (ubR === 0) {
+                const lbCurrent = [];
+                for (let i = 0; i < ubRounds[0].length; i += 2) {
+                  lbCurrent.push(evaluateMatch(`L${lbMatchCounter++}`, ubRounds[0][i].loser, ubRounds[0][i+1].loser, boReg));
+                }
+                lbRounds.push(lbCurrent);
+                prevLb = lbCurrent;
+              } else {
+                const ubLosers = ubRounds[ubR].map(m => m.loser);
+                let crossed = [...ubLosers];
+                if (ubR % 2 === 1) crossed.reverse(); 
+
+                const lbPhase1 = [];
+                for (let i = 0; i < prevLb.length; i++) {
+                  lbPhase1.push(evaluateMatch(`L${lbMatchCounter++}`, prevLb[i].winner, crossed[i], boReg));
+                }
+                lbRounds.push(lbPhase1);
+
+                if (lbPhase1.length > 1) {
+                  const lbPhase2 = [];
+                  for (let i = 0; i < lbPhase1.length; i += 2) {
+                    lbPhase2.push(evaluateMatch(`L${lbMatchCounter++}`, lbPhase1[i].winner, lbPhase1[i+1].winner, boReg));
+                  }
+                  lbRounds.push(lbPhase2);
+                  prevLb = lbPhase2;
+                } else {
+                  prevLb = lbPhase1;
+                }
+              }
+            }
+          }
+
+          let grandFinalMatch = null, grandFinalResetMatch = null, finalChampion = null, needsReset = false;
+          let ubRoundsForRender = [...ubRounds];
+
+          if (appConfig.doubleElimination && currentN > 2) {
+            const upperWinner = ubRounds[ubRounds.length - 1][0].winner;
+            const lowerWinner = lbRounds[lbRounds.length - 1][0].winner;
+            grandFinalMatch = evaluateMatch('GF1', upperWinner, lowerWinner, boFin);
+            needsReset = grandFinalMatch.winner === lowerWinner && grandFinalMatch.winner !== null && grandFinalMatch.winner !== '';
+            
+            if (needsReset) {
+              grandFinalResetMatch = evaluateMatch('GF2', upperWinner, lowerWinner, boFin);
+              finalChampion = grandFinalResetMatch.winner;
+            } else {
+              finalChampion = grandFinalMatch.winner;
+            }
+          } else {
+            ubRoundsForRender = ubRounds.slice(0, -1);
+            const lastUB = ubRounds[ubRounds.length - 1][0];
+            grandFinalMatch = evaluateMatch('GF1', lastUB.p1, lastUB.p2, boFin);
+            finalChampion = grandFinalMatch.winner;
+          }
+
+          const initialBattles = [];
+          for (let i = 0; i < currentN; i += 2) {
+            initialBattles.push({ title: `Batalla ${Math.floor(i/2) + 1}`, slots: [i, i+1] });
+          }
+
+          const PlayerRow = ({ player, score, winsNeeded, isWinner, isWaiting, isBye, onDecrease, onIncrease, searchQuery }) => {
+            const displayStr = isWaiting ? 'Esperando rival...' : (isBye ? 'PASE DIRECTO' : player);
+            const isHighlighted = searchQuery && player && typeof player === 'string' && player.toLowerCase().includes(searchQuery.toLowerCase());
+            
+            let bgClass = 'border-l-4 border-l-transparent';
+            if (isHighlighted) {
+               bgClass = 'bg-yellow-500/20 border-l-4 border-l-yellow-400 ring-1 ring-yellow-400/50 shadow-[inset_0_0_15px_rgba(234,179,8,0.2)]';
+            } else if (isWinner && !isBye) {
+               bgClass = 'bg-indigo-600/20 border-l-4 border-l-indigo-500';
+            }
+
+            return (
+              <div className={`p-3 flex items-center justify-between border-b border-slate-700/50 transition-all duration-300 ${bgClass}`}>
+                <span className={`truncate font-medium pr-2 ${isWaiting ? 'text-slate-500 italic' : (isBye ? 'text-slate-600 font-black italic text-xs' : (isHighlighted ? 'text-yellow-400 font-bold drop-shadow-md' : (isWinner ? 'text-white' : 'text-slate-300')))}`}>
+                  {displayStr}
+                </span>
+                {!isBye && !isWaiting && (
+                  <div className="flex items-center gap-1 bg-slate-950 rounded border border-slate-700 p-0.5 shrink-0">
+                    <button onClick={onDecrease} disabled={score === 0} className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 rounded disabled:opacity-30">➖</button>
+                    <span className={`w-4 text-center text-sm font-bold ${score >= winsNeeded ? 'text-indigo-400' : 'text-white'}`}>{score}</span>
+                    <button onClick={onIncrease} disabled={score >= winsNeeded} className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white hover:bg-slate-800 rounded disabled:opacity-30">➕</button>
+                  </div>
+                )}
+              </div>
+            );
+          };
+
+          const MatchCard = ({ title, match, isGrandFinal, searchQuery }) => {
+            if (!match) return null;
+            const { key, p1, p2, s1, s2, winner, bestOf, winsNeeded, isAutoWin } = match;
+            if (isBye(p1) && isBye(p2)) return <div className="w-72 invisible shrink-0" style={{ height: '126px' }}></div>;
+
+            const hasStarted = s1 > 0 || s2 > 0;
+            return (
+              <div className={`bg-slate-800 border ${isGrandFinal ? 'border-yellow-500/50 shadow-yellow-500/10' : 'border-slate-700'} rounded-xl shadow-lg w-72 flex flex-col overflow-hidden relative shrink-0`}>
+                {isAutoWin && winner && !isBye(winner) && (
+                  <div className="absolute inset-0 z-10 bg-slate-900/60 backdrop-blur-[1px] flex items-center justify-center pointer-events-none">
+                    <span className="bg-indigo-900/80 text-indigo-200 border border-indigo-500/30 px-3 py-1 rounded-full text-xs font-bold shadow-lg">Avance Automático</span>
+                  </div>
+                )}
+                <div className={`px-3 py-2 text-xs font-bold uppercase tracking-wider border-b flex justify-between items-center ${isGrandFinal ? 'bg-yellow-900/30 text-yellow-500 border-yellow-700/50' : 'bg-slate-900 text-slate-400 border-slate-700'}`}>
+                  <div className="flex items-center gap-2">
+                    <span>{title}</span>
+                    {!isAutoWin && <span className="bg-slate-800 px-1.5 py-0.5 rounded text-[10px] border border-slate-600">BO{bestOf}</span>}
+                  </div>
+                  {hasStarted && !isAutoWin && (
+                    <button onClick={() => resetMatch(key)} className="hover:text-white transition-colors" title="Reiniciar marcador">🔄</button>
+                  )}
+                </div>
+                <div className="flex flex-col">
+                  <PlayerRow player={p1} score={s1} winsNeeded={winsNeeded} isWinner={winner === p1} isWaiting={isWaiting(p1)} isBye={isBye(p1)} onDecrease={() => updateScore(key, 0, -1, winsNeeded)} onIncrease={() => updateScore(key, 0, 1, winsNeeded)} searchQuery={searchQuery} />
+                  <PlayerRow player={p2} score={s2} winsNeeded={winsNeeded} isWinner={winner === p2} isWaiting={isWaiting(p2)} isBye={isBye(p2)} onDecrease={() => updateScore(key, 1, -1, winsNeeded)} onIncrease={() => updateScore(key, 1, 1, winsNeeded)} searchQuery={searchQuery} />
+                </div>
+              </div>
+            );
+          };
+
+          return (
+            <div className="min-h-screen pb-20">
+              <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 shadow-md">
+                <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="bg-indigo-600 p-2 rounded-lg text-xl">🏆</div>
+                    <div>
+                      <h1 className="text-xl font-black bg-gradient-to-r from-indigo-400 to-purple-400 bg-clip-text text-transparent leading-tight">Torneo a Medida</h1>
+                      <p className="text-xs text-slate-400">Totalmente configurable y dinámico</p>
+                    </div>
+                  </div>
+                  <nav className="flex bg-slate-800 p-1 rounded-lg w-full sm:w-auto overflow-x-auto mt-4 sm:mt-0">
+                    <button onClick={() => setView('settings')} className={`flex-1 sm:flex-none justify-center px-4 py-2 rounded-md text-sm font-semibold flex items-center gap-2 transition-colors ${view === 'settings' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`}><span>⚙️</span> Configuración</button>
+                    <button onClick={checkAndSetBracketView} className={`flex-1 sm:flex-none justify-center px-4 py-2 rounded-md text-sm font-semibold flex items-center gap-2 transition-colors ${view === 'bracket' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`}><span>⚔️</span> Ver Bracket</button>
+                    <div className="w-px bg-slate-700 mx-1 hidden sm:block"></div>
+                    <button onClick={() => setView('manager')} className={`flex-1 sm:flex-none justify-center px-4 py-2 rounded-md text-sm font-semibold flex items-center gap-2 transition-colors ${view === 'manager' ? 'bg-emerald-600 text-white shadow-sm' : 'text-slate-400 hover:text-white hover:bg-slate-700'}`}><span>📂</span> Mis Torneos</button>
+                  </nav>
+                </div>
+              </header>
+
+              <main className="max-w-7xl mx-auto px-4 py-8 relative">
+                {toast.show && (
+                  <div className={`fixed top-24 left-1/2 -translate-x-1/2 z-50 text-white px-6 py-3 rounded-full shadow-2xl flex items-center gap-2 font-bold animate-pulse ${toast.type === 'error' ? 'bg-red-600' : (toast.type === 'success' ? 'bg-emerald-600' : 'bg-indigo-600')}`}>
+                    {toast.type === 'error' ? <span>⚠️</span> : <span>✅</span>} 
+                    {toast.msg}
+                  </div>
+                )}
+
+                {view === 'manager' && (
+                  <div className="max-w-4xl mx-auto space-y-8">
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 md:p-8 shadow-lg">
+                      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                        <div>
+                          <h2 className="text-xl font-bold text-indigo-400 flex items-center gap-2"><span>💾</span> Guardar Progreso</h2>
+                          <p className="text-sm text-slate-400 mt-1">{currentTournamentId ? `Guardando cambios en: ${tournamentName}` : 'Guarda este torneo de forma segura en tu navegador.'}</p>
+                        </div>
+                        <div className="flex gap-3">
+                          <button onClick={handleNewTournament} className="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 text-sm border border-slate-700">
+                            <span>📄</span> Crear Nuevo
+                          </button>
+                          <button onClick={handleSaveTournament} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2 rounded-lg font-bold transition-colors flex items-center gap-2 shadow-lg shadow-indigo-600/20">
+                            <span>💾</span> Guardar
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 md:p-8 shadow-lg">
+                      <h2 className="text-xl font-bold text-indigo-400 flex items-center gap-2 mb-6"><span>📂</span> Mis Torneos Guardados</h2>
+                      {savedTournaments.length === 0 ? (
+                        <div className="text-center py-12 bg-slate-950/50 rounded-xl border border-slate-800 border-dashed">
+                          <div className="text-4xl mb-3 opacity-50">📂</div>
+                          <p className="text-slate-400">No tienes torneos guardados todavía.</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {savedTournaments.map(t => (
+                            <div key={t.id} className={`bg-slate-950 border rounded-xl p-5 transition-all ${currentTournamentId === t.id ? 'border-indigo-500 shadow-lg shadow-indigo-500/10' : 'border-slate-800 hover:border-slate-600'}`}>
+                              <div className="flex justify-between items-start mb-3 min-h-[28px]">
+                                {editingId === t.id ? (
+                                  <div className="flex items-center gap-2 w-full mr-2">
+                                    <input autoFocus type="text" value={editTempName} onChange={(e) => setEditTempName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleRenameSave(t.id)} className="flex-1 bg-slate-900 border border-indigo-500 rounded px-2 py-1 text-white text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                                    <button onClick={() => handleRenameSave(t.id)} className="text-emerald-400 hover:text-emerald-300" title="Guardar nombre">✅</button>
+                                    <button onClick={() => setEditingId(null)} className="text-slate-400 hover:text-slate-300" title="Cancelar">❌</button>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <h3 className="font-bold text-white text-lg truncate pr-2 flex items-center gap-2 group cursor-pointer" onClick={() => handleRenameStart(t)}>
+                                      {t.name}
+                                      <button className="text-slate-500 opacity-0 group-hover:opacity-100 transition-opacity hover:text-indigo-400 text-sm" title="Renombrar torneo">✏️</button>
+                                    </h3>
+                                    {currentTournamentId === t.id && <span className="bg-indigo-600/20 text-indigo-400 text-xs px-2 py-0.5 rounded-full border border-indigo-500/30 font-bold shrink-0">Abierto</span>}
+                                  </>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-500 flex items-center gap-1 mb-5"><span>📅</span> Guardado: {new Date(t.updatedAt).toLocaleDateString()} a las {new Date(t.updatedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</p>
+                              <div className="flex gap-2">
+                                <button onClick={() => handleLoadTournament(t)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-sm font-bold transition-colors">Cargar Torneo</button>
+                                <button onClick={() => handleDeleteTournament(t.id)} className="bg-red-950/30 text-red-400 hover:bg-red-900 hover:text-white px-3 py-2 rounded-lg transition-colors" title="Eliminar">🗑️</button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {view === 'settings' && (
+                  <div className="max-w-4xl mx-auto space-y-8">
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 md:p-8 shadow-lg">
+                      <h2 className="text-xl font-bold text-indigo-400 flex items-center gap-2 mb-6"><span>🎛️</span> 1. Reglas del Torneo</h2>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div className="bg-slate-950 p-4 rounded-lg border border-slate-800 flex items-center justify-between">
+                          <div>
+                            <h3 className="font-bold text-slate-200">Doble Eliminación</h3>
+                            <p className="text-xs text-slate-400 mt-1">Activar cuadro de perdedores</p>
+                          </div>
+                          <label className="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" className="sr-only peer" checked={appConfig.doubleElimination} onChange={(e) => setAppConfig({...appConfig, doubleElimination: e.target.checked})} />
+                            <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                          </label>
+                        </div>
+                        <div className="bg-slate-950 p-4 rounded-lg border border-slate-800">
+                          <div className="flex justify-between items-center mb-3"><h3 className="font-bold text-slate-200 text-sm">Sets por partido (Mejor de)</h3></div>
+                          <div className="flex gap-4">
+                            <div className="flex-1"><label className="text-xs text-slate-400 block mb-1">Regulares</label><select value={appConfig.bestOfRegular} onChange={(e) => setAppConfig({...appConfig, bestOfRegular: parseInt(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded text-white text-sm p-1.5 focus:outline-none focus:border-indigo-500">{[1, 3, 5, 7, 9, 11].map(n => <option key={n} value={n}>BO{n}</option>)}</select></div>
+                            <div className="flex-1"><label className="text-xs text-slate-400 block mb-1">Gran Final</label><select value={appConfig.bestOfFinal} onChange={(e) => setAppConfig({...appConfig, bestOfFinal: parseInt(e.target.value)})} className="w-full bg-slate-800 border border-slate-700 rounded text-white text-sm p-1.5 focus:outline-none focus:border-yellow-500">{[1, 3, 5, 7, 9, 11].map(n => <option key={n} value={n}>BO{n}</option>)}</select></div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 md:p-8 shadow-lg">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                        <div>
+                          <h2 className="text-xl font-bold text-indigo-400 flex items-center gap-2"><span>👤+</span> 2. Lista de Jugadores</h2>
+                          <p className="text-sm text-slate-400 mt-1">Nombres de los participantes (Sin límite)</p>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={clearRoster} className={`px-3 py-2 rounded-lg font-medium transition-all flex items-center justify-center gap-2 text-sm ${confirmClear ? 'bg-red-600 text-white shadow-lg shadow-red-600/30 scale-105' : 'bg-slate-800 text-slate-400 hover:bg-red-900/50 hover:text-red-400'}`}>
+                            <span>👤-</span> {confirmClear ? '¿Seguro? Click para vaciar' : 'Limpiar Todo'}
+                          </button>
+                          <button onClick={addPlayer} className="bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 text-sm"><span>➕</span> Añadir</button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                        {roster.map((player, idx) => (
+                          <div key={idx} className="flex items-center gap-2 bg-slate-950 p-2 rounded-lg border border-slate-800 focus-within:border-indigo-500 transition-colors">
+                            <input type="text" value={player} onChange={(e) => handleRosterChange(idx, e.target.value)} className="bg-transparent w-full text-white focus:outline-none px-2 py-1 placeholder:text-slate-600" placeholder={`Jugador ${idx + 1}`} />
+                            <button onClick={() => removePlayer(idx)} className="text-slate-500 hover:text-red-400 p-1.5 transition-colors" title="Eliminar jugador"><span>🗑️</span></button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 md:p-8 shadow-lg">
+                      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 gap-4">
+                        <div>
+                          <h2 className="text-xl font-bold text-indigo-400 flex items-center gap-2 mb-2"><span>⚔️</span> 3. Emparejamientos ({currentN} Huecos)</h2>
+                          <p className="text-sm text-slate-400">El bracket crecerá según el número de participantes.</p>
+                        </div>
+                        <button onClick={randomizeBracket} className="bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-600 hover:text-white px-5 py-3 rounded-xl font-bold transition-all transform hover:scale-105 flex items-center justify-center gap-2 shadow-lg"><span>🔀</span> RANDOMIZAR CUADRO</button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                        {initialBattles.map((battle, bIdx) => (
+                          <div key={bIdx} className="bg-slate-950 border border-slate-800 rounded-xl p-4 shadow-md">
+                            <h4 className="text-slate-400 font-bold text-sm mb-4 flex items-center gap-2"><span>⚔️</span> {battle.title}</h4>
+                            <div className="flex flex-col gap-3 relative">
+                              <div className="relative">
+                                <select value={activeSlots[battle.slots[0]]} onChange={(e) => updateSlot(battle.slots[0], e.target.value)} className="w-full bg-slate-900 border-l-4 border-l-indigo-500 border-y border-r border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 appearance-none font-medium cursor-pointer">
+                                  <option value="">-- PASE DIRECTO --</option>
+                                  {roster.filter(p => p.trim() !== '').map((p, idx) => (
+                                    <option key={idx} value={p} disabled={activeSlots.includes(p) && activeSlots[battle.slots[0]] !== p}>{p} {activeSlots.includes(p) && activeSlots[battle.slots[0]] !== p ? '(Ya asignado)' : ''}</option>
+                                  ))}
+                                </select>
+                                <span className="absolute right-3 top-3 text-slate-500 pointer-events-none text-xs">▼</span>
+                              </div>
+                              <div className="text-center text-xs font-black text-slate-600 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-slate-950 px-2 rounded-full z-10">VS</div>
+                              <div className="relative">
+                                <select value={activeSlots[battle.slots[1]]} onChange={(e) => updateSlot(battle.slots[1], e.target.value)} className="w-full bg-slate-900 border-l-4 border-l-slate-600 border-y border-r border-slate-700 rounded-lg p-3 text-white focus:outline-none focus:ring-1 focus:ring-indigo-500 appearance-none font-medium cursor-pointer">
+                                  <option value="">-- PASE DIRECTO --</option>
+                                  {roster.filter(p => p.trim() !== '').map((p, idx) => (
+                                    <option key={idx} value={p} disabled={activeSlots.includes(p) && activeSlots[battle.slots[1]] !== p}>{p} {activeSlots.includes(p) && activeSlots[battle.slots[1]] !== p ? '(Ya asignado)' : ''}</option>
+                                  ))}
+                                </select>
+                                <span className="absolute right-3 top-3 text-slate-500 pointer-events-none text-xs">▼</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="mt-8 flex justify-center border-t border-slate-800 pt-8">
+                        <button onClick={checkAndSetBracketView} className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 px-8 rounded-xl shadow-lg shadow-indigo-600/20 transition-all transform hover:scale-105 flex items-center gap-2 w-full sm:w-auto justify-center"><span>🏆</span> Empezar Torneo</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {view === 'bracket' && (
+                  <div className="flex flex-col gap-6 relative">
+                    <div className="flex justify-between items-center bg-slate-900/50 p-4 rounded-xl border border-slate-800">
+                      <p className="text-sm text-slate-400 flex items-center gap-2"><span>🛡️</span> Registra los sets. Usa la pestaña "Mis Torneos" para guardar tu progreso.</p>
+                      <button onClick={resetTournament} className={`text-sm font-medium flex items-center gap-1 transition-all px-3 py-1.5 rounded-lg ${confirmReset ? 'bg-red-600 text-white shadow-lg shadow-red-600/30' : 'text-red-400 hover:bg-red-950/50'}`}>
+                        <span>🔄</span> {confirmReset ? '¿Seguro? Click para resetear' : 'Resetear Marcadores'}
+                      </button>
+                    </div>
+
+                    <div className="sticky top-[70px] z-30 flex justify-end pointer-events-none mt-2">
+                      <div className="pointer-events-auto flex items-center gap-2 bg-slate-800/95 backdrop-blur-md shadow-xl shadow-black/50 border border-slate-600 p-2 rounded-xl relative mr-2">
+                        <div className="relative flex items-center">
+                          <span className="absolute left-3 text-slate-400">🔍</span>
+                          <input type="text" placeholder="Buscar jugador..." value={searchQuery} onChange={e => setSearchQuery(e.target.value)} className="bg-slate-900 border border-slate-700 rounded-lg pl-9 pr-3 py-1.5 text-sm text-white focus:ring-1 focus:ring-indigo-500 outline-none w-36 md:w-48 transition-all placeholder:text-slate-500" />
+                        </div>
+                        <div className="w-px h-6 bg-slate-700 mx-1"></div>
+                        <button onClick={() => setZoom(z => Math.max(0.3, z - 0.15))} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="Alejar">➖</button>
+                        <span className="text-xs font-bold text-slate-300 w-10 text-center select-none">{Math.round(zoom * 100)}%</span>
+                        <button onClick={() => setZoom(z => Math.min(2, z + 0.15))} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="Acercar">➕</button>
+                        <button onClick={() => setZoom(1)} className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors" title="Restablecer Zoom">🔲</button>
+                      </div>
+                    </div>
+
+                    <div className="overflow-auto border border-slate-800/60 rounded-2xl bg-slate-900/30 w-full max-h-[75vh] shadow-inner relative custom-scrollbar">
+                      <div style={{ transform: `scale(${zoom})`, transformOrigin: 'top left', minWidth: 'max-content' }} className="p-8 flex flex-col gap-12 transition-transform duration-200 ease-out">
+                        
+                        {ubRoundsForRender.length > 0 && (
+                          <section className="pb-4">
+                            <h2 className="text-xl font-black text-indigo-400 mb-6 flex items-center gap-2"><span>🏆</span> {appConfig.doubleElimination ? 'Cuadro de Ganadores' : 'Eliminatoria'}</h2>
+                            <div className="flex gap-12 min-w-max px-2">
+                              {ubRoundsForRender.map((round, rIdx) => {
+                                const isLastRound = rIdx === ubRoundsForRender.length - 1;
+                                const nextRound = isLastRound ? null : ubRoundsForRender[rIdx + 1];
+                                const is1to1 = nextRound && nextRound.length === round.length;
+
+                                return (
+                                  <div key={`ur-${rIdx}`} className="flex flex-col gap-0 min-w-[18rem]">
+                                    {round.map((match, mIdx) => {
+                                      const isEven = mIdx % 2 === 0;
+                                      const isGhost = isBye(match.p1) && isBye(match.p2);
+
+                                      return (
+                                        <div key={match.key} className="flex-1 flex flex-col justify-center py-3 relative group">
+                                          {!isLastRound && !isGhost && (
+                                            <>
+                                              <div className="absolute right-[-1.5rem] top-1/2 w-6 h-[2px] bg-slate-600 -translate-y-1/2 z-0"></div>
+                                              {!is1to1 && <div className={`absolute right-[-1.5rem] w-[2px] bg-slate-600 z-0 ${isEven ? 'top-1/2 bottom-0' : 'top-0 bottom-1/2'}`}></div>}
+                                            </>
+                                          )}
+                                          {rIdx > 0 && !isGhost && <div className="absolute left-[-1.5rem] top-1/2 w-6 h-[2px] bg-slate-600 -translate-y-1/2 z-0"></div>}
+                                          
+                                          <div className="relative z-10 flex justify-center">
+                                            <MatchCard title={`Ronda ${rIdx + 1}`} match={match} searchQuery={searchQuery} />
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        )}
+
+                        {appConfig.doubleElimination && lbRounds.length > 0 && (
+                          <section className="pb-4 border-t border-slate-800 pt-8 mt-4">
+                            <h2 className="text-xl font-black text-orange-400 mb-6 flex items-center gap-2"><span>⚠️</span> Cuadro de Perdedores</h2>
+                            <div className="flex gap-12 min-w-max px-2">
+                              {lbRounds.map((round, rIdx) => {
+                                const isLastRound = rIdx === lbRounds.length - 1;
+                                const nextRound = isLastRound ? null : lbRounds[rIdx + 1];
+                                const is1to1 = nextRound && nextRound.length === round.length;
+
+                                return (
+                                  <div key={`lr-${rIdx}`} className="flex flex-col gap-0 min-w-[18rem]">
+                                    {round.map((match, mIdx) => {
+                                      const isEven = mIdx % 2 === 0;
+                                      const isGhost = isBye(match.p1) && isBye(match.p2);
+
+                                      return (
+                                        <div key={match.key} className="flex-1 flex flex-col justify-center py-3 relative group">
+                                          {!isLastRound && !isGhost && (
+                                            <>
+                                              <div className="absolute right-[-1.5rem] top-1/2 w-6 h-[2px] bg-slate-600 -translate-y-1/2 z-0"></div>
+                                              {!is1to1 && <div className={`absolute right-[-1.5rem] w-[2px] bg-slate-600 z-0 ${isEven ? 'top-1/2 bottom-0' : 'top-0 bottom-1/2'}`}></div>}
+                                            </>
+                                          )}
+                                          {rIdx > 0 && !isGhost && <div className="absolute left-[-1.5rem] top-1/2 w-6 h-[2px] bg-slate-600 -translate-y-1/2 z-0"></div>}
+
+                                          <div className="relative z-10 flex justify-center">
+                                            <MatchCard title={`Repesca ${rIdx + 1}`} match={match} searchQuery={searchQuery} />
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </section>
+                        )}
+
+                        <section className="pb-4 border-t-2 border-slate-700 pt-10 mt-6 bg-slate-950/50 rounded-3xl p-6 shadow-inner w-max min-w-full">
+                          <h2 className="text-2xl font-black text-yellow-500 mb-8 flex items-center justify-center gap-2 text-center w-full"><span>👑</span> La Gran Final</h2>
+                          <div className="flex flex-col lg:flex-row items-center justify-center gap-12 min-w-max">
+                            <div className="flex flex-col items-center gap-3">
+                              <span className="text-sm font-bold text-slate-400 bg-slate-900 px-3 py-1 rounded-full border border-slate-700">Set de Campeonato</span>
+                              <MatchCard title="Gran Final" match={grandFinalMatch} isGrandFinal={true} searchQuery={searchQuery} />
+                            </div>
+                            {appConfig.doubleElimination && needsReset && (
+                              <>
+                                <div className="text-yellow-600 font-bold flex flex-col items-center"><span className="text-xl">¡RESET!</span><span className="text-xs uppercase tracking-widest">Bracket Reiniciado</span></div>
+                                <div className="flex flex-col items-center gap-3">
+                                  <span className="text-sm font-bold text-red-400 bg-red-950/30 px-3 py-1 rounded-full border border-red-900/50">Muerte Súbita Final</span>
+                                  <MatchCard title="Gran Final (Reset)" match={grandFinalResetMatch} isGrandFinal={true} searchQuery={searchQuery} />
+                                </div>
+                              </>
+                            )}
+                            <div className="ml-0 lg:ml-12 mt-8 lg:mt-0 flex flex-col justify-center items-center">
+                              <div className={`w-48 h-48 rounded-full border-4 flex flex-col items-center justify-center p-6 text-center transition-all duration-700 shadow-2xl ${finalChampion && finalChampion !== '' ? 'border-yellow-400 bg-yellow-400/10 shadow-yellow-500/30 scale-110' : 'border-slate-800 bg-slate-900 border-dashed'}`}>
+                                <span className="text-5xl mb-3">{finalChampion && finalChampion !== '' ? '👑' : '⚫'}</span>
+                                <span className={`font-bold text-xl leading-tight ${finalChampion && finalChampion !== '' ? 'text-yellow-400' : 'text-slate-600'}`}>{(finalChampion && finalChampion !== '') ? finalChampion : 'CAMPEÓN'}</span>
+                              </div>
+                            </div>
+                          </div>
+                        </section>
+                        
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </main>
+            </div>
+          );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
