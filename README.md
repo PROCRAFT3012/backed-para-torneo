@@ -10,4 +10,4 @@ Una aplicación web ultra-ligera y completamente funcional contenida en un únic
 * **Completamente Offline:** Una vez descargado el archivo, no necesitas conexión a internet para usarlo.
 
 🚀 **¿Cómo usarlo?**
-Simplemente descarga el archivo `Torneo.html` y ábrelo en cualquier navegador web (Chrome, Firefox, Safari...). ¡A jugar!
+Simplemente descarga el archivo y ábrelo en cualquier navegador web (Chrome, Firefox, Safari...). ¡A jugar!
